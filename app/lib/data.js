@@ -64,7 +64,7 @@ lib.update = (dir, file, data, callback) => {
             const stringData = JSON.stringify(data);
 
             // Truncate the contents of the call before writing data to it
-            fs.truncate(fileDescriptor, (err) => {
+            fs.ftruncate(fileDescriptor, (err) => {
                 if (!err) {
                     // Write to the file and close it
                     fs.writeFile(fileDescriptor, stringData, (err) => {
@@ -100,6 +100,21 @@ lib.delete = (dir, file, callback) => {
             callback('Error deleting the file');
         }
     });
+}
+
+// List all the items in a directory
+lib.list = (dir, callback) => {
+    fs.readdir(lib.baseDir + dir + '/', (err, data) => {
+        if (!err && data && data.length > 0) {
+            let trimmedFileNames = [];
+            data.forEach((fileName) => {
+                trimmedFileNames.push(fileName.replace('.json', ''));
+            });
+            callback(false, trimmedFileNames);
+        } else {
+            callback(err, data);
+        }
+    })
 }
 
 
