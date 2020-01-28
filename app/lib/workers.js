@@ -11,6 +11,9 @@ const https = require('https');
 const http = require('http');
 const helpers = require('./helpers');
 const url = require('url');
+const _logs = require('./logs');
+const util = require('util');
+const debug = util.debuglog('workers')
 
 
 // Instantiate a worker object
@@ -29,12 +32,12 @@ workers.gatherAllChecks = () => {
                         // Pass it to the check validator, and let that function continue or log erros as needed
                         workers.validateCheckData(originalCheckData);
                     } else {
-                        console.log('Error reading one of the check\'s data');
+                        debug('Error reading one of the check\'s data');
                     }
                 });
             });
         } else {
-            console.log('Error: Could not find any checks to process');
+            debug('Error: Could not find any checks to process');
        }
     });
 }
@@ -59,7 +62,7 @@ workers.validateCheckData = (originalCheckData) => {
     if (originalCheckData.id && originalCheckData.userPhone && originalCheckData.protocol && originalCheckData.url && originalCheckData.method && originalCheckData.successCodes && originalCheckData.timeoutSeconds) {
         workers.performCheck(originalCheckData);
     } else {
-        console.log("Error: One of the checks is not properly formated, Skipping it.", originalCheckData)
+        debug("Error: One of the checks is not properly formated, Skipping it.", originalCheckData)
     }
 };
 
@@ -142,11 +145,15 @@ workers.processCheckOutcome = (originalCheckData, checkOutcome) => {
     const alertWarranted = originalCheckData.lastChecked && originalCheckData.state !== state ? true : false;
 
 
+	// Log the Outcome
+	const timeOfCheck = Date.now();
+	workers.log(originalCheckData, checkOutcome, state, alertWarranted, timeOfCheck);
+
     // Update the check data
     let newCheckData = originalCheckData;
     newCheckData.state = state;
-    newCheckData.lastChecked = Date.now();
-
+	newCheckData.lastChecked = timeOfCheck;
+	
     // Save the updates
     _data.update('checks', newCheckData.id, newCheckData, (err) => {
         if (!err) {
@@ -154,10 +161,10 @@ workers.processCheckOutcome = (originalCheckData, checkOutcome) => {
             if (alertWarranted) {
                 workers.alertUsersToStatusChange(newCheckData);
             } else {
-                console.log('Check outcome has not changed, no alert needed');
+                debug('Check outcome has not changed, no alert needed');
             }
         } else {
-            console.log("Error trying to save updates to one of the checks");
+			debug("Error trying to save updates to one of the checks");
         }
     })
 }
@@ -167,12 +174,38 @@ workers.alertUsersToStatusChange = (newCheckData) => {
     const msg = 'Alert: Your check for ' + newCheckData.method.toUpperCase() + ' ' + newCheckData.protocol + '://' + newCheckData.url + ' is currently ' + newCheckData.state;
     helpers.sendTwilioSms(newCheckData.userPhone, msg, (err) => {
         if (!err) {
-            console.log('Success: User was alerted to a status change in their check, via sms: ', msg);
+			debug('Success: User was alerted to a status change in their check, via sms: ', msg);
         } else {
-            console.log('Error: Could not send sms alert to the user who had a state change in their check');
+			debug('Error: Could not send sms alert to the user who had a state change in their check');
         }
     });
 }
+
+workers.log = (originalCheckData, checkOutcome, state, alertWarranted, timeOfCheck) => {
+	// form the log data
+	const logData = {
+		'check': originalCheckData,
+		'outcome': checkOutcome,
+		'state': state,
+		'alert': alertWarranted,
+		'time': timeOfCheck
+	};
+
+	// Convert data to a string
+	const logString = JSON.stringify(logData);
+
+	// Determing the name of the log file
+	const logFileName = originalCheckData.id
+
+	// Append the log sting to the file we want to write to
+	_logs.append(logFileName, logString, (err) => {
+		if (!err) {
+			debug('Logging to file succeeded');
+		} else {
+			debug('Logging to file failed');
+		}
+	});
+};
 
 // This is a timer to execute the worker-process once per minute
 workers.loop = () => {
@@ -181,14 +214,60 @@ workers.loop = () => {
     }, 1000 * 60)
 }
 
+// Rotate (compress) the log files
+workers.rotateLogs = () => {
+	// Listing all the non-compressed log files
+	_logs.list(false, (err, logs) => {
+		if (!err && logs && logs.length > 0) {
+			logs.forEach((logName) => {
+				// Compress the data to a different file
+				const logId = logName.replace('.log', '');
+				const newFileId = logId + '-' + Date.now();
+				_logs.compress(logId, newFileId, (err) => {
+					if (!err) {
+						// Truncating the log
+						_logs.truncate(logId, (err) => {
+							if (!err) {
+								debug('Success truncating log file');
+							} else {
+								debug('Error truncating log file');
+							}
+						});
+					} else {
+						debug('Error compressing one of the log files', err);
+					}
+				})
+			})
+		} else {
+			debug("Error could not find any logs to rotate");
+		}
+	})
+}
+
+// Timer to excute the log rotation process once per day
+workers.logRotationLoop = () => {
+	setInterval(() => {
+		workers.rotateLogs();
+	}, 1000 * 60 * 60 * 24)
+}
 
 // Init Script
 workers.init = () => {
+
+	// Send to console in yellow
+	console.log('\x1b[33m%s\x1b[0m', 'Background workers are running');
+
     // Execute all the checks immediately
     workers.gatherAllChecks();
 
     // Call the loop so the checks will execute later
-    workers.loop();
+	workers.loop();
+	
+	// Compress all the logs immediately
+	workers.rotateLogs();
+
+	// Call the compression loop so logs will be compressed later on
+	workers.logRotationLoop();
 }
 
 // Export the module
