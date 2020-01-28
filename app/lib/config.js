@@ -31,9 +31,9 @@ environments.production = {
     'hashingSecret': 'thisisasecret',
     'maxChecks': 5,
     'twilio': {
-        'accountSid': '',
-        'authToken': '',
-        'fromPhone': ''
+        'accountSid': 'AC24acc3394c4055cf038aae929f216bc6',
+        'authToken': 'aac8343d06893f262bbfa2c19c981aa0',
+        'fromPhone': '+16169657351'
     }
 }
 

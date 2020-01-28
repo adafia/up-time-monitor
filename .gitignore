@@ -1,3 +1,4 @@
 app/https/
 app/.data
+app/.logs
 app/.env
